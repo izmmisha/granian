@@ -53,6 +53,9 @@ tokio-tungstenite = "0.17"
 tokio-util = { version = "0.7", features = ["codec"] }
 tungstenite = "0.17"
 
+[target.'cfg(windows)'.dependencies]
+named-lock = "0.3.0"
+
 [build-dependencies]
 pyo3-build-config = { version = "=0.17", features = ["resolve-config"] }
 

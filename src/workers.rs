@@ -11,6 +11,46 @@ use super::rsgi::serve::RSGIWorker;
 use super::wsgi::serve::WSGIWorker;
 use super::tls::{load_certs as tls_load_certs, load_private_key as tls_load_pkey};
 
+use core::pin::Pin;
+use core::task;
+use hyper::server::{accept::Accept, conn::AddrIncoming};
+use named_lock::NamedLock;
+
+pub struct SyncAddrIncoming {
+    inner: AddrIncoming,
+    lock: NamedLock,
+}
+
+impl Accept for SyncAddrIncoming {
+    type Conn = <AddrIncoming as Accept>::Conn;
+    type Error = <AddrIncoming as Accept>::Error;
+
+    fn poll_accept(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Option<Result<Self::Conn, Self::Error>>> {
+        let this = Pin::into_inner(self);
+        let _guard = this.lock.lock().unwrap();
+
+        Pin::new(&mut this.inner).poll_accept(cx)
+    }
+}
+
+impl SyncAddrIncoming {
+    pub fn from_tcp(tcp: TcpListener) -> Self {
+        tcp.set_nonblocking(true).expect("Cannot set non-blocking");
+
+        let port = tcp.local_addr().unwrap().port();
+        let lock_name = format!("granian-{}", port);
+
+        let listener = tokio::net::TcpListener::from_std(tcp).unwrap();
+        Self {
+            inner: AddrIncoming::from_listener(listener).unwrap(),
+            lock: NamedLock::create(&lock_name).unwrap(),
+        }
+    }
+}
+
 pub(crate) struct WorkerConfig {
     pub id: i32,
     socket_fd: i32,
@@ -195,7 +235,7 @@ macro_rules! serve_rth {
                     let service = crate::workers::build_service!(
                         callback_wrapper, rth, $target
                     );
-                    let server = hyper::Server::from_tcp(tcp_listener).unwrap()
+                    let server = hyper::Server::builder(crate::workers::SyncAddrIncoming::from_tcp(tcp_listener))
                         .http1_only(http1_only)
                         .http2_only(http2_only)
                         .http1_max_buf_size(http1_buffer_max)
@@ -323,7 +363,7 @@ macro_rules! serve_wth {
                         let service = crate::workers::build_service!(
                             callback_wrapper, rth, $target
                         );
-                        let server = hyper::Server::from_tcp(tcp_listener).unwrap()
+                        let server = hyper::Server::builder(crate::workers::SyncAddrIncoming::from_tcp(tcp_listener))
                             .executor(crate::workers::WorkerExecutor)
                             .http1_only(http1_only)
                             .http2_only(http2_only)
