@@ -67,3 +67,8 @@ lto = "fat"
 opt-level = 3
 panic = "abort"
 strip = true
+
+[profile.release_with_deb_info]
+inherits = "release"
+debug = true
+strip = false
